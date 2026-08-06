@@ -1,0 +1,221 @@
+# ============================================================
+# CI/CD Pipeline — Fleet Ping Service
+# Test → Build → Security Scan → Containerize → Deploy → Verify
+# ============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write      # For Azure OIDC login
+  security-events: write # For uploading scan results
+
+env:
+  ACR_NAME: acrvexarfleetdev
+  IMAGE_NAME: fleet-ping
+  CONTAINER_APP_NAME: ca-vexar-fleet-dev
+  RESOURCE_GROUP: rg-vexar-fleet-dev
+
+jobs:
+  # ----------------------------------------------------------------
+  # 1. Test & Lint
+  # ----------------------------------------------------------------
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
+
+  # ----------------------------------------------------------------
+  # 2. Security Scan — Container Image
+  # ----------------------------------------------------------------
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build -t ${{ env.IMAGE_NAME }}:scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:scan
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  # ----------------------------------------------------------------
+  # 3. Build & Push to ACR
+  # ----------------------------------------------------------------
+  build-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+  # ----------------------------------------------------------------
+  # 4. Deploy to Azure Container Apps
+  # ----------------------------------------------------------------
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment:
+      name: development
+      url: https://${{ env.CONTAINER_APP_NAME }}.azurecontainerapps.io
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy new revision
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: ${{ env.CONTAINER_APP_NAME }}
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # ----------------------------------------------------------------
+  # 5. Post-Deploy Verification
+  # ----------------------------------------------------------------
+  verify:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Application Gateway Public IP
+        id: get-ip
+        run: |
+          IP=$(az network public-ip show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name pip-appgw-vexar-fleet-dev \
+            --query ipAddress -o tsv)
+          echo "appgw_ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Wait for new revision to stabilize
+        run: sleep 30
+
+      - name: Health and Readiness checks
+        run: |
+          check_endpoint() {
+            local endpoint=$1
+            local name=$2
+            local pass_count=0
+            local fail_count=0
+            while true; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$endpoint" || echo "error")
+              if [ "$STATUS" = "200" ]; then
+                pass_count=$((pass_count + 1))
+                fail_count=0
+                echo "✅ $name check passed (status $STATUS) - $pass_count/3 consecutive passes"
+                if [ "$pass_count" -ge 3 ]; then
+                  echo "✅ $name check fully passed"
+                  break
+                fi
+              else
+                fail_count=$((fail_count + 1))
+                pass_count=0
+                echo "❌ $name check failed (status $STATUS) - $fail_count/3 consecutive failures"
+                if [ "$fail_count" -ge 3 ]; then
+                  echo "❌ $name check failed 3 times in a row"
+                  exit 1
+                fi
+              fi
+              sleep 5
+            done
+          }
+          
+          echo "Starting Health check..."
+          check_endpoint "http://${{ steps.get-ip.outputs.appgw_ip }}/health" "Health"
+          
+          echo "Starting Readiness check..."
+          check_endpoint "http://${{ steps.get-ip.outputs.appgw_ip }}/ready" "Readiness"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "⚠️ Deployment verification failed — triggering rollback"
+          az containerapp revision list \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "sort_by([?properties.active], &properties.createdTime)[-2].name" \
+            -o tsv | xargs -I {} az containerapp ingress traffic set \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --revision-weight {}=100
+          echo "🔁 Traffic shifted to previous revision"

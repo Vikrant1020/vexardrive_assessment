@@ -1,15 +1,28 @@
 {
   "name": "vexar-fleet-ping-service",
-  "version": "0.1.0",
-  "description": "VexarDrive Fleet Ping Service (assessment starter)",
+  "version": "1.0.0",
+  "description": "VexarDrive Fleet Ping Service — receives vehicle location pings and handles driver auth",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"no tests configured\""
+    "dev": "node server.js",
+    "test": "jest --passWithNoTests --forceExit",
+    "lint": "eslint .",
+    "audit:check": "npm audit --audit-level=moderate"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.11.5",
-    "jsonwebtoken": "^9.0.2"
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.3",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.20.0",
+    "jest": "^29.7.0",
+    "pino-pretty": "^13.0.0",
+    "supertest": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

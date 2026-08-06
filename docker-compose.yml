@@ -1,4 +1,7 @@
-version: "3.8"
+# ==========================================================
+# Docker Compose — Local Development
+# Secrets are loaded from .env file (not committed to repo)
+# ==========================================================
 
 services:
   app:
@@ -7,17 +10,37 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - PORT=3000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-vexaradmin}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-vexaradmin}
+      - DB_NAME=${POSTGRES_DB:-vexar_fleet}
+      - DB_SSL=false
+      - JWT_SECRET=${JWT_SECRET:-supersecretjwtkey}
+      - LOG_LEVEL=debug
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   db:
-    image: postgres:15
+    image: postgres:16-alpine
     ports:
-      - "0.0.0.0:5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
-      - POSTGRES_USER=vexaradmin
-      - POSTGRES_PASSWORD=V3xar@2024!Prod
-      - POSTGRES_DB=vexar_fleet
+      - POSTGRES_USER=${POSTGRES_USER:-vexaradmin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vexaradmin}
+      - POSTGRES_DB=${POSTGRES_DB:-vexar_fleet}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vexaradmin} -d ${POSTGRES_DB:-vexar_fleet}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
   pgdata:

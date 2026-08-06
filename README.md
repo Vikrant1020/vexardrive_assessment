@@ -1,112 +1,137 @@
 # Fleet Ping Service
 
-The Fleet Ping Service is a Node.js/Express backend service used to receive vehicle location updates and handle driver authentication.
+> VexarDrive Technologies — Fleet vehicle location ping ingestion and driver authentication service.
 
-The service uses PostgreSQL for persistent storage and is containerized using Docker.
+## Overview
 
-## Technology Stack
+The Fleet Ping Service is a production-ready Node.js/Express backend that receives vehicle location updates from fleet devices and handles driver authentication. It uses PostgreSQL for persistent storage and is deployed on Azure Container Apps behind an Application Gateway with WAF protection.
 
-* Node.js
-* Express.js
-* PostgreSQL
-* Docker
-* GitHub Actions
+## Architecture
+
+See [Architecture Diagram](docs/ARCHITECTURE.md) for the full Azure architecture with Mermaid diagram.
+
+**Key components:**
+- **Application Gateway v2 + WAF** — Edge security (OWASP 3.2, Bot Manager)
+- **Azure Container Apps** (internal) — Auto-scaling serverless compute
+- **PostgreSQL Flexible Server** — VNet-integrated with PgBouncer
+- **Azure Key Vault** — Secrets management via Managed Identity
+- **Azure Container Registry** — Private Docker image storage
 
 ## API Endpoints
 
-The service currently provides endpoints for:
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | No | Service info |
+| `GET` | `/health` | No | Liveness probe |
+| `GET` | `/ready` | No | Readiness probe (checks DB) |
+| `POST` | `/api/fleet/ping` | No | Ingest vehicle location ping |
+| `POST` | `/api/auth/login` | No | Driver login (returns JWT) |
+| `GET` | `/api/admin/drivers` | JWT | List all drivers (admin) |
 
-* Driver login
-* Vehicle location ping ingestion
-* Fleet ping retrieval
+## Quick Start (Local Development)
 
-Refer to the application source for endpoint definitions, request formats, and current behavior.
+### Prerequisites
+- Node.js >= 20
+- Docker & Docker Compose
 
-## Prerequisites
+### Using Docker Compose
 
-To run the service locally, ensure you have:
+1. Copy the environment template:
+   ```bash
+   cp .env.example .env
+   ```
 
-* Node.js
-* npm
-* PostgreSQL
+2. Fill in the secrets in `.env`:
+   ```env
+   POSTGRES_PASSWORD=your-secure-password
+   JWT_SECRET=your-jwt-secret-key
+   ```
 
-Alternatively, the application and database can be started using Docker Compose.
+3. Start the services:
+   ```bash
+   docker compose up --build
+   ```
 
-## Local Setup
+4. The service is available at `http://localhost:3000`.
 
-Install dependencies:
+### Without Docker
 
-```bash
-npm install
+1. Install dependencies:
+   ```bash
+   npm ci
+   ```
+
+2. Set environment variables (see `.env.example` for the full list).
+
+3. Apply the database schema:
+   ```bash
+   psql -h localhost -U vexaradmin -d vexar_fleet -f schema.sql
+   ```
+
+4. Start the application:
+   ```bash
+   npm start
+   ```
+
+## Project Structure
+
 ```
-
-Configure the required environment variables using the provided environment configuration.
-
-Start the application:
-
-```bash
-node server.js
-```
-
-The service will start on the configured application port.
-
-## Database
-
-The service uses PostgreSQL.
-
-The initial database structure is available in:
-
-```text
-schema.sql
-```
-
-Apply the schema to your local PostgreSQL instance before running the application.
-
-## Docker
-
-The repository includes:
-
-```text
-Dockerfile
-docker-compose.yml
-```
-
-To start the application using Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-## Configuration
-
-Application configuration is managed through environment variables.
-
-Review the existing configuration and application source to determine the variables required to run the service.
-
-## CI/CD
-
-A GitHub Actions workflow is included in the repository.
-
-Changes pushed to the `main` branch currently trigger the configured deployment workflow.
-
-## Repository Structure
-
-```text
 .
 ├── .github/
-│   └── workflows/
-├── Dockerfile
-├── docker-compose.yml
-├── schema.sql
-├── server.js
+│   ├── workflows/
+│   │   └── ci-cd.yml          # CI/CD pipeline
+│   └── dependabot.yml         # Automated dependency updates
+├── azure-infrastructure/
+│   ├── env/
+│   │   └── dev/
+│   │       ├── main.tf            # Environment orchestration
+│   │       ├── variables.tf       # Dev defaults
+│   │       ├── provider.tf        # Azure provider config
+│   │       └── output.tf          # Output values
+│   └── modules/                   # Reusable Terraform modules (24 modules)
+├── docs/
+│   ├── ARCHITECTURE.md        # Architecture diagram
+│   └── TECHNICAL_REPORT.md    # Full technical report
+├── server.js                  # Application entry point
+├── schema.sql                 # Database schema
 ├── package.json
-└── README.md
+├── Dockerfile                 # Multi-stage production build
+├── docker-compose.yml         # Local development
+├── .env.example               # Environment variable template
+├── .dockerignore
+└── .gitignore
 ```
+
+## Documentation
+
+- [Technical Report](docs/TECHNICAL_REPORT.md) — Full assessment report with decisions, trade-offs, and rationale
+- [Architecture Diagram](docs/ARCHITECTURE.md) — Azure architecture with Mermaid diagram
+
+## Infrastructure Deployment (Terraform)
+
+```bash
+cd azure-infrastructure/env/dev
+
+# Initialize
+terraform init
+
+# Plan (pass secrets via CLI — never commit them)
+terraform plan \
+  -var="tenant_id=<azure-tenant-id>" \
+  -var="deployer_object_id=<your-object-id>" \
+  -var="db_admin_password=<secure-password>" \
+  -var="jwt_secret=<secure-jwt-secret>"
+
+# Apply
+terraform apply \
+  -var="tenant_id=<azure-tenant-id>" \
+  -var="deployer_object_id=<your-object-id>" \
+  -var="db_admin_password=<secure-password>" \
+  -var="jwt_secret=<secure-jwt-secret>"
+```
+
+CI/CD deploys to the **dev** environment (`rg-vexar-fleet-dev`, `ca-vexar-fleet-dev`, `acrvexarfleetdev`).
 
 ## Assessment Context
 
-This repository is provided as part of the **VexarDrive Technologies DevOps & Cloud Infrastructure Engineer Technical Assessment**.
-
-Review the repository in its current state before making changes.
-
-Your assessment brief contains the requirements, expected deliverables, and submission instructions.
+This repository is the submission for the **VexarDrive Technologies DevOps & Cloud Infrastructure Engineer Technical Assessment**. See [TECHNICAL_REPORT.md](docs/TECHNICAL_REPORT.md) for the full write-up.

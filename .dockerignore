@@ -1,0 +1,32 @@
+node_modules
+npm-debug.log*
+.env
+.env.*
+!.env.example
+
+# Source control & OS
+.git
+.github
+.gitignore
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Documentation
+*.md
+docs/
+
+# Infrastructure & Scripts
+azure-infrastructure/
+clean.sh
+docker-compose*.yml
+.dockerignore
+
+# Testing & Linting
+.eslintrc*
+jest.config*
+coverage/
+tests/
+__tests__/
