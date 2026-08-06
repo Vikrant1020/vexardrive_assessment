@@ -41,8 +41,9 @@ See [Architecture Diagram](docs/ARCHITECTURE.md) for the full Azure architecture
    cp .env.example .env
    ```
 
-2. Fill in the secrets in `.env`:
+2. Fill in the required secrets in `.env` (add `POSTGRES_PASSWORD` for Docker Compose to set up the DB):
    ```env
+   DB_PASSWORD=your-secure-password
    POSTGRES_PASSWORD=your-secure-password
    JWT_SECRET=your-jwt-secret-key
    ```
@@ -88,13 +89,17 @@ See [Architecture Diagram](docs/ARCHITECTURE.md) for the full Azure architecture
 │   │       ├── variables.tf       # Dev defaults
 │   │       ├── provider.tf        # Azure provider config
 │   │       └── output.tf          # Output values
-│   └── modules/                   # Reusable Terraform modules (24 modules)
+│   ├── modules/                   # Reusable Terraform modules (24 modules)
+│   └── clean.sh                   # Cleanup script
 ├── docs/
 │   ├── ARCHITECTURE.md        # Architecture diagram
 │   └── TECHNICAL_REPORT.md    # Full technical report
 ├── server.js                  # Application entry point
+├── server.test.js             # Unit tests
 ├── schema.sql                 # Database schema
 ├── package.json
+├── package-lock.json
+├── eslint.config.js           # Linter configuration
 ├── Dockerfile                 # Multi-stage production build
 ├── docker-compose.yml         # Local development
 ├── .env.example               # Environment variable template
@@ -106,31 +111,6 @@ See [Architecture Diagram](docs/ARCHITECTURE.md) for the full Azure architecture
 
 - [Technical Report](docs/TECHNICAL_REPORT.md) — Full assessment report with decisions, trade-offs, and rationale
 - [Architecture Diagram](docs/ARCHITECTURE.md) — Azure architecture with Mermaid diagram
-
-## Infrastructure Deployment (Terraform)
-
-```bash
-cd azure-infrastructure/env/dev
-
-# Initialize
-terraform init
-
-# Plan (pass secrets via CLI — never commit them)
-terraform plan \
-  -var="tenant_id=<azure-tenant-id>" \
-  -var="deployer_object_id=<your-object-id>" \
-  -var="db_admin_password=<secure-password>" \
-  -var="jwt_secret=<secure-jwt-secret>"
-
-# Apply
-terraform apply \
-  -var="tenant_id=<azure-tenant-id>" \
-  -var="deployer_object_id=<your-object-id>" \
-  -var="db_admin_password=<secure-password>" \
-  -var="jwt_secret=<secure-jwt-secret>"
-```
-
-CI/CD deploys to the **dev** environment (`rg-vexar-fleet-dev`, `ca-vexar-fleet-dev`, `acrvexarfleetdev`).
 
 ## Assessment Context
 
